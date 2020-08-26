@@ -18,7 +18,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
 ! !USES:
 
-  use mpeu_util, only: die,perr,getindex
+  use mpeu_util, only: die,perr,getindex,luavail,gettable,gettablesize
   use kinds, only: r_kind,r_single,r_double,i_kind
 
 
@@ -147,6 +147,10 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 !   2017-02-06  todling - add netcdf_diag capability; hidden as contained code
 !   2017-02-09  guo     - Remove m_alloc, n_alloc.
 !                       . Remove my_node with corrected typecast().
+!   2019-02-22  mccarty - a number of updates for Aeolus, including error tuning
+!   capability
+!   2019-07-26  hliu  - add Bias correction, QCs, and errors of Aeolus L2B HLOS
+!   wind component
 !
 ! !REMARKS:
 !   language: f90
@@ -176,12 +180,13 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
   real(r_kind) sinazm,cosazm,scale
   real(r_kind) ratio_errors,dlat,dlon,dtime,error,dpres,zsges    !jsw
   real(r_kind) dlnp,pobl,rhgh,rsig,rlow
-  real(r_kind) zob,termrg,dz,termr,sin2,termg
+  real(r_kind) zob,termrg,dz,termr,sin2,termg, zobt, zobb,zobt0, zobb0     !hliu
   real(r_kind) sfcchk,slat,psges,dwwind
   real(r_kind) ugesindw,vgesindw,factw,presw
+  real(r_kind) tsgesindw,qgesindw,ugesindwt,vgesindwt,ugesindwb,vgesindwb,wshear ! hliu
   real(r_kind) residual,obserrlm,obserror,ratio,val2
   real(r_kind) ress,ressw
-  real(r_kind) val,valqc,ddiff,rwgt,sfcr,skint
+  real(r_kind) val,valqc,ddiff,rwgt,sfcr,skint,ddif0
   real(r_kind) cg_dw,wgross,wnotgross,wgt,arg,term,exp_arg,rat_err2
   real(r_kind) errinv_input,errinv_adjst,errinv_final
   real(r_kind) err_input,err_adjst,err_final,tfact
@@ -193,8 +198,9 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
   integer(i_kind) mm1,ikxx,nn,isli,ibin,ioff,ioff0
   integer(i_kind) jsig
   integer(i_kind) i,nchar,nreal,k,j,k1,jj,l,ii,k2
-  integer(i_kind) ier,ilon,ilat,ihgt,ilob,id,itime,ikx,iatd,inls,incls
-  integer(i_kind) iazm,ielva,iuse,ilate,ilone
+  integer(i_kind) ier,ilon,ilat,ihgt,ilob,id,itime,ikx,iatd,inls,incls,isatid
+  integer(i_kind) iazm,ielva,iuse,ilate,ilone,istat
+  integer(i_kind) ipres,idwdp,itemp,idwdT,iback,idwdB
   integer(i_kind) idomsfc,isfcr,iff10,iskint
 
   real(r_kind) :: delz
@@ -209,6 +215,11 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
   logical proceed
 
   logical:: in_curbin,in_anybin, save_jacobian
+  !ILIANA-start 
+  integer(i_kind),dimension(nobs_bins):: n_alloc
+  integer(i_kind),dimension(nobs_bins):: m_alloc
+  class(obsNode),pointer:: my_node
+   !-end  
   type(dwNode),pointer:: my_head
   type(obs_diag),pointer:: my_diag
   type(obs_diags),pointer:: my_diagLL
@@ -220,10 +231,44 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
   real(r_kind),allocatable,dimension(:,:,:,:) :: ges_u
   real(r_kind),allocatable,dimension(:,:,:,:) :: ges_v
 
+! variables added for errtable handling
+  real(r_kind),allocatable,dimension(:,:,:) :: errtable
+  integer(i_kind),allocatable,dimension(:) :: types
+  integer(i_kind),parameter :: ierr_hght = 1
+  integer(i_kind),parameter :: ierr_m = 2
+  integer(i_kind),parameter :: ierr_b = 3
+  integer(i_kind) ntypes, max_errlev
+  logical errtable_defined
+
+
+! hliu ------ for Aeolus L2B wind bias correction ---------
+
+  integer, parameter:: nlats=19, nlays= 24
+
+  real(r_single) brayasc1(nlays, nlats), braydes1(nlays, nlats)
+  real(r_single) brayasc2(nlays, nlats), braydes2(nlays, nlats)
+  real(r_single) brayasc(nlays, nlats), braydes(nlays, nlats)
+  real(r_single) bmieasc(nlays, nlats), bmiedes(nlays, nlats)
+  real(r_single) hght_ray(nlays), hght_mie(nlays)
+  real(r_single) dwwindt, dwwindb
+  integer(i_kind) n, lnd, kray, kmie
+
   type(obsLList),pointer,dimension(:):: dwhead
   dwhead => obsLL(:)
 
   save_jacobian = conv_diagsave .and. jiter==jiterstart .and. lobsdiag_forenkf
+  data hght_ray /19.8, 17.8, 15.8, 13.8, 12.3, 11.2, 10.2, 9.2, 8.2, 7.2, 6.2, &
+5.2, 4.2, 3.2, 2.2, 1.6, 1.3, 1.1, 0.9, 0.6, 0.3, 0.1, 0.0, -0.1/
+
+  data hght_mie /17.8, 16.1, 14.1, 12.6, 11.6, 10.5, 9.5, 8.5, 7.5, 6.5, 5.5, &
+4.5, 3.5, 2.5, 1.9, 1.6, 1.3, 1.1, 0.9, 0.6, 0.3, 0.1, 0.0, -0.1/
+
+      hght_ray = hght_ray *1000.0   !(m)
+      hght_mie = hght_mie *1000.0   !(m)
+
+
+   call read_L2B_bias_correction_ !hliu
+
 
 ! Check to see if required guess fields are available
   call check_vars_(proceed)
@@ -231,10 +276,14 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
 ! If require guess vars available, extract from bundle ...
   call init_vars_
+  call initialize_error_table_
 
 !*********************************************************************************
 ! Read and reformat observations in work arrays.  
   read(lunin)data,luse,ioid
+
+!ILIANA
+write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW successfully'
 
 !    index information for data array (see reading routine)
   ikxx=1      ! index of ob type
@@ -249,19 +298,27 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
   iatd=10     ! index of atmospheric depth     
   ilob=11     ! index of lidar observation
   ier=12      ! index of obs error
-  id=13       ! index of station id
-  iuse=14     ! index of use parameter
-  idomsfc=15  ! index of dominate surface type
-  iskint=16   ! index of skin temperature
-  iff10 = 17  ! index of 10 m wind factor
-  isfcr = 18  ! index of surface roughness
-  ilone=19    ! index of longitude (degrees)
-  ilate=20    ! index of latitude (degrees)
+  id     = 13  ! index of station id
+  isatid = 14  ! index of satellite id
+  iuse   = 15  ! index of use parameter
+  idomsfc= 16  ! index of dominate surface type
+  iskint = 17  ! index of skin temperature
+  iff10  = 18  ! index of 10 m wind factor
+  isfcr  = 19  ! index of surface roughness
+  ilone  = 20  ! index of longitude (degrees)
+  ilate  = 21  ! index of latitude (degrees)
+  ipres  = 22  ! index of Retr. Pressure
+  idwdp  = 23  ! index of Deriv. of wind w.r.t. Pressure
+  itemp  = 24  ! index of Retr. Pressure
+  idwdT  = 25  ! index of Deriv. of wind w.r.t. Pressure
+  iback  = 26  ! index of Retr. Pressure
+  idwdB  = 27  ! index of Deriv. of wind w.r.t. Pressure
 
   do i=1,nobs
      muse(i)=nint(data(iuse,i)) <= jiter
   end do
 
+write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 
   dup=one
   do k=1,nobs
@@ -322,7 +379,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
      else
         ibin = 1
      endif
-     IF (ibin<1.OR.ibin>nobs_bins) write(6,*)mype,'Error nobs_bins,ibin= ',nobs_bins,ibin
+     IF (ibin<1.OR.ibin>nobs_bins) write(6,*)mype,'Error nobs_bins,ibin= ',nobs_bins,ibin,dtime,hr_obsbin
 
      if (luse_obsdiag) my_diagLL => odiagLL(ibin)
 
@@ -418,6 +475,17 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 ! units.  Save the observation height in zob for later use.
      zob = dpres
      call grdcrd1(dpres,zges,nsig,1)
+! hliu -------------------------------------------------
+! get top and bottom heights of L2B layers in grid relative
+! need to read out these heights directly from the data later
+!
+     zobt= zob + 0.5*data(iatd,i)        ! top of L2B layers
+     zobb= zob - 0.5*data(iatd,i)        ! bottom of L2B layers
+      zobt0 = zobt    ! save zobt in (m)
+      zobb0 = zobb    ! save zobt in (m)
+     call grdcrd1(zobt,zges,nsig,1)
+     call grdcrd1(zobb,zges,nsig,1)
+!hliu --------------------------------------
 
 ! Set indices of model levels below (k1) and above (k2) observation.
 ! wm - updated so {k1,k2} are at min {1,2} and at max {nsig-1,nsig}
@@ -456,6 +524,26 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
 ! Set initial obs error to that supplied in BUFR stream.
      error = data(ier,i)
+!hliu-------------------------------------------------------------
+! Add regression-based error for Aeolus Rayleigh clear-sky winds;
+! Use global average for Mie cloudy winds for now.
+!hliu-------------------------------------------------------------
+
+   if (ictype(ikx)==48 ) then
+     if( icsubtype(ikx)==20) then                ! Rayleigh clear-sky
+      if( data(iazm, i) > 180.0*deg2rad ) then   ! ascending orbits
+       error = 1.16 + data(ier,i)
+      else                                       ! descending orbits
+       error = 1.25 + 0.94*data(ier,i)
+      endif
+     else if ( icsubtype(ikx)==11) then          ! Mie cloudy-sky
+       error = 3.0
+     else
+      ! these wind types expect large errors!
+    endif
+   endif
+
+
 ! Removed repe_dw, but retained the "+ one" for reproducibility
 !  for ikx=100 or 101 - wm
      if (ictype(ikx)==100 .or. ictype(ikx)==101)error = error + one
@@ -469,6 +557,19 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
         endif
      endif    
 
+!ILIANA -old error, replaced by hliu (see block above) 
+!     if (errtable_defined) error =
+!     get_error_(ictype(ikx),icsubtype(ikx),data(ihgt,i),error)
+!     if (error > tiny_r_kind) then     
+!         ratio_errors = error/abs(error + 1.0e6_r_kind*rhgh + r8*rlow)
+!         error = one/error
+!     else
+!         ratio_errors = zero
+!         error = zero
+!         muse(i) = .false.
+!     endif
+
+
      ratio_errors = error/abs(error + 1.0e6_r_kind*rhgh + r8*rlow)
      error = one/error
 
@@ -480,11 +581,23 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
         hrdifsig,mype,nfldsig)
      call tintrp31(ges_v,vgesindw,dlat,dlon,dpres,dtime,&
         hrdifsig,mype,nfldsig) 
+! hliu  simulation at top of L2B layers
+     call tintrp31(ges_u,ugesindwt,dlat,dlon,zobt,dtime,&
+        hrdifsig,mype,nfldsig)
+     call tintrp31(ges_v,vgesindwt,dlat,dlon,zobt,dtime,&
+        hrdifsig,mype,nfldsig)
+
+! hliu  simulation at bottom of L2B layers
+     call tintrp31(ges_u,ugesindwb,dlat,dlon,zobb,dtime,&
+        hrdifsig,mype,nfldsig)
+     call tintrp31(ges_v,vgesindwb,dlat,dlon,zobb,dtime,&
+        hrdifsig,mype,nfldsig)
 
 
 ! Next, convert wind components to line of sight value
-!wm     if (nint(data(isubtype,i))==100.or.nint(data(isubtype,i))==101) then
-     if (ictype(ikx)==100 .or. ictype(ikx)==101) then
+!    Note:  Aeolus defines type differently than old DWLDAT spec;
+!           hence this logic.
+     if (ictype(ikx)==100 .or. ictype(ikx)==101 .or. ictype(ikx)==48) then
 !     KNMI  product  msq
         cosazm  = -cos(data(iazm,i))  ! cos(azimuth)  ! mccarty msq 
         sinazm  = -sin(data(iazm,i))  ! sin(azimuth)  ! mccarty msq
@@ -494,8 +607,51 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
      endif
 
      dwwind=(ugesindw*sinazm+vgesindw*cosazm)*factw
+     dwwindt =(ugesindwt*sinazm+vgesindwt*cosazm)*factw    ! hliu
+     dwwindb =(ugesindwb*sinazm+vgesindwb*cosazm)*factw    ! hliu
 
-     iz = max(1, min( int(dpres), nsig))
+!hliu   ddiff = data(ilob,i) - dwwind
+!   ----- save obs-ges before bias correction -----------
+        ddif0 = data(ilob,i) - dwwind
+
+!hliu------------------------------------------------------------
+!      Apply QCs for the simulations/observations pair associated
+!      with large vertical wind shear of GFS to avoid
+!      potential large simulation errors.
+!hliu------------------------------------------------------------
+! KA commented out for FMB_stats exp
+!     wshear = (dwwindt - dwwindb) /(zobt0-zobb0)         ! m/s/m
+!     if( abs(wshear) > 5.0e-3 ) muse(i) = .false.
+!       data(iuse,i) = 206
+
+!hliu-----------------------------------------------------------
+!  Apply bias corrections to L2B winds (Rayleigh and
+!  Mie) for Sept 12 - Oct. 16 2018. Biases are binned in 10 deg
+!  latitudinal belts for every L2B layers.  
+!---------------------------------------------------------------
+   if(ictype(ikx)==48) then
+      kray = minloc( abs(hght_ray-zob),1)
+      kmie = minloc( abs(hght_mie-zob),1)
+      lnd = int((data(ilate,i)+90+5)/10) + 1       ! lnd=1-19,90S->90N
+
+     if( icsubtype(ikx)==20) then                  ! Rayleigh clear-sky
+       if( data(iazm, i) > 180.0*deg2rad ) then    ! ascending orbits
+        data(ilob,i) = data(ilob,i) - brayasc(kray, lnd)
+       else                                        ! descending
+        data(ilob,i) = data(ilob,i) - braydes(kray, lnd)
+       endif
+
+     else if ( icsubtype(ikx)==11) then            ! Mie cloudy-sky
+       if( data(iazm, i) > 180.0*deg2rad ) then    ! ascending orbits
+        data(ilob,i) = data(ilob,i) - bmieasc(kmie, lnd)
+       else                                        ! descending
+        data(ilob,i) = data(ilob,i) - bmiedes(kmie, lnd)
+       endif
+     endif
+   endif
+!hliu -------------------------------------------------------
+
+    iz = max(1, min( int(dpres), nsig))
      delz = max(zero, min(dpres - float(iz), one))
 
      if (save_jacobian) then
@@ -852,9 +1008,9 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
         rdiagbuf(16,ii) = errinv_final         ! final inverse observation error
 
         rdiagbuf(17,ii) = data(ilob,i)         ! observation
-        rdiagbuf(18,ii) = ddiff                ! obs-ges used in analysis 
-        rdiagbuf(19,ii) = data(ilob,i)-dwwind  ! obs-ges w/o bias correction (future slot)
- 
+        rdiagbuf(18,ii) = ddif0 !ddiff         ! ILIANA:O-B w/out BC ! obs-ges used in analysis
+!KA        rdiagbuf(19,ii) = data(ilob,i)-dwwind  ! obs-ges w/o bias correction!(future slot)
+        rdiagbuf(19,ii) = ddiff !ddif0         ! ILIANA:O-B with Hui's 2018 BC
         rdiagbuf(20,ii) = factw                ! 10m wind reduction factor
         rdiagbuf(21,ii) = data(ielva,i)*rad2deg! elevation angle (degrees)
         rdiagbuf(22,ii) = data(iazm,i)*rad2deg ! bearing or azimuth (degrees)
@@ -925,8 +1081,26 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
            call nc_diag_metadata("Errinv_Final",            sngl(errinv_final)     )
 
            call nc_diag_metadata("Observation",                   sngl(data(ilob,i)))
-           call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   sngl(ddiff)      )
-           call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", sngl(data(ilob,i)-dwwind))
+           call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   sngl(ddiff))
+           call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", sngl(ddif0))
+           call nc_diag_metadata("Wind_Reduction_Factor_at_10m",  sngl(factw))
+
+           call nc_diag_metadata("Elevation_Angle",    sngl(data(ielva,i)*rad2deg)  )
+           call nc_diag_metadata("Wind_Azimuth_Angle", sngl(data(iazm,i)*rad2deg)   )
+           call nc_diag_metadata("Laser_Shot_Count",   sngl(data(inls,i)/1000.0)    )
+           call nc_diag_metadata("Cloud_Laser_Shot_Count", sngl(data(incls,i))      )
+           call nc_diag_metadata("Atmospheric_Depth", sngl(data(iatd,i))            )
+
+           call nc_diag_metadata("Retrieval_Pressure", sngl(data(ipres,i)/100._r_kind) )  ! convert from Pa ot hPa
+           call nc_diag_metadata("Deriv_Wind_wrt_Pressure",  sngl(data(idwdp,i)*100._r_kind) )  ! convert from ms-1/Pa to /hPa
+           call nc_diag_metadata("Retrieval_Temperature", sngl(data(itemp,i))         )
+           call nc_diag_metadata("Deriv_Wind_wrt_Temperature", sngl(data(idwdT,i))    )  !currentl tv; may need to be tsen
+           call nc_diag_metadata("Retrieval_Backscatter", sngl(data(iback,i))         )
+           call nc_diag_metadata("Deriv_Wind_wrt_Backscatter", sngl(data(idwdB,i))    )
+
+           call nc_diag_metadata("Background_Temperature", sngl(tsgesindw)            )
+           call nc_diag_metadata("Background_Specific_Humidity", sngl(qgesindw)       )
+
 
 !_RT_NC4_TODO
 !_RT    rdiagbuf(20,ii) = factw                ! 10m wind reduction factor
@@ -960,12 +1134,213 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
    
   end subroutine contents_netcdf_diag_
 
+  subroutine initialize_error_table_
+     character(len=*),parameter:: myname_=myname//'initialize_error_table_'
+     character(len=*),parameter:: rcname='anavinfo'
+     character(len=*),parameter:: tbname='dw_error::'
+     character(len=256),allocatable,dimension(:):: error_driver_tbl, error_tbl
+     character(len=40) cur_table
+
+     integer(i_kind) cur_kx, cur_sub, ityp, irow, lu_err, ntot, nrows
+
+
+
+     lu_err = luavail()
+
+     open(lu_err,file=rcname,form='formatted')
+
+     call gettablesize(tbname,lu_err,ntot,ntypes)
+     if(ntypes==0) then
+        close(lu_err)
+        errtable_defined = .false.
+        return
+     endif
+
+     errtable_defined = .true.
+
+     allocate(error_driver_tbl(ntypes),&
+              types(ntypes)            )
+
+     ! get error driver table dw_error
+     call gettable(tbname,lu_err,ntot,ntypes,error_driver_tbl)
+
+     max_errlev = 0
+     ! get error tables defined in driver
+     ! first, get max # of levels for all types
+     do ityp=1,ntypes
+        read(error_driver_tbl(ityp),*)cur_kx,cur_sub,cur_table
+        types(ityp) = type_ref_(cur_kx,cur_sub)
+        ! read error table cur_table
+        rewind(lu_err)
+        cur_table = trim(cur_table)//'::'
+        call gettablesize(cur_table,lu_err,ntot,nrows)
+        max_errlev = max(max_errlev, nrows+1)
+     enddo !ityp        
+     ! second, allocate and read tables
+
+     allocate(errtable(3, ntypes, max_errlev) )
+     errtable = 9.0e9
+
+     do ityp=1,ntypes
+        read(error_driver_tbl(ityp),*)cur_kx,cur_sub,cur_table
+        rewind(lu_err)
+        cur_table = trim(cur_table)//'::'
+        call gettablesize(cur_table,lu_err,ntot,nrows)
+        allocate(error_tbl(nrows))
+        call gettable(cur_table,lu_err,ntot,nrows,error_tbl)
+        do irow=1,nrows
+           read(error_tbl(irow),*)errtable(ierr_hght,ityp,irow),errtable(ierr_m,ityp,irow), errtable(ierr_b,ityp,irow)
+        enddo !irow
+
+        !quickly scan through read error table to ensure height increases w/
+        !each row (starts at surface), die if not
+        do irow=1,nrows
+            if (errtable(ierr_hght,ityp,irow) > errtable(ierr_hght,ityp,irow+1)) then
+                call die(myname_,'heights in dw error table not ascending, die')
+            endif
+        enddo !irow
+        deallocate(error_tbl)
+     enddo !ityp
+
+
+     deallocate(error_driver_tbl)
+
+     close(lu_err)
+
+     return
+  end subroutine initialize_error_table_
+
+  function type_ref_(kx,sub)
+     ! this function converts the kxtype and subtype into a single number for
+     ! simple referencing
+     integer(i_kind),intent(in)  :: kx, sub
+     integer(i_kind) type_ref_
+
+     type_ref_ = kx*1000 + sub
+
+     return
+  end function type_ref_
+
+  function error_index_(kx,sub)
+     ! this function get the index of the 'type' dimension of the errtable array
+     ! based on kx & subtype
+     integer(i_kind),intent(in)  :: kx, sub
+     integer(i_kind) error_index_
+     integer(i_kind) i, idx
+
+     idx = -1
+     do i=1,ntypes
+         if (types(i) == type_ref_(kx,sub))idx = i
+     enddo
+     error_index_ = idx
+
+     return
+  end function error_index_
+
+  function get_error_(kx,sub,hght,in_error)
+     ! this function get the error value based on the specified error tables.
+     integer(i_kind),intent(in)  :: kx,sub
+     real(r_kind),intent(in)     :: hght, in_error
+     real(r_kind)                :: get_error_
+
+     integer(i_kind) i,idx
+     real(r_kind) out_error
+
+     if (errtable_defined) then
+         idx = error_index_(kx,sub)
+
+         out_error=0.0
+         do i=1,max_errlev-1
+             if (hght >= errtable(ierr_hght,idx,i) .and. hght < errtable(ierr_hght,idx,i+1)) then
+                 out_error=errtable(ierr_m,idx,i)*in_error + errtable(ierr_b,idx,i)
+             endif
+         enddo
+
+         get_error_ = out_error
+     else
+         get_error_ = in_error !return input value if no error table defined
+     endif
+
+     return
+  end function get_error_
+
   subroutine final_vars_
     if(allocated(ges_v )) deallocate(ges_v )
     if(allocated(ges_u )) deallocate(ges_u )
     if(allocated(ges_z )) deallocate(ges_z )
     if(allocated(ges_ps)) deallocate(ges_ps)
+    if(allocated(errtable)) deallocate(errtable)
+    if(allocated(types))    deallocate(types)
   end subroutine final_vars_
+!hliu: adopted from Mccarty ---------------
+subroutine read_L2B_bias_correction_
+
+     brayasc1 = 0.0; braydes1 = 0.0
+     brayasc2 = 0.0; braydes2 = 0.0
+     bmieasc  = 0.0; bmiedes  = 0.0
+
+! KA FM-B (2019) period
+  open(961, &
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Ray_asc',form='formatted')
+   open(962, &
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Ray_des',form='formatted')
+   open(965, &
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Mie_asc',form='formatted')
+   open(966, &
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Mie_des',form='formatted')
+
+! FM-A (2018) period
+!   open(961, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.asc1',form='formatted')
+!   open(962, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.asc2',form='formatted')
+!   open(963, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.des1',form='formatted')
+!   open(964, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.des2',form='formatted')
+
+!   open(965, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.asc',form='formatted')
+!   open(966, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.des',form='formatted')
+
+!   open(961, &
+!file='/scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018/Rayleigh_Bias_correction.asc1',form='formatted')
+!   open(962, &
+!file='/scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018/Rayleigh_Bias_correction.asc2',form='formatted')
+!   open(963, &
+!file='/scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018Rayleigh_Bias_correction.des1',form='formatted')
+!   open(964, &
+!file='/scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018/Rayleigh_Bias_correction.des2',form='formatted')
+
+!   open(965, &
+!file='/scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018/Mie_Bias_correction.asc',form='formatted')
+!   open(966, &
+!file='/scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018/Mie_Bias_correction.des',form='formatted')
+
+    do k=2, 14
+     read(961, '(19f6.1)') (brayasc1(k,n), n=1, nlats)
+     read(962, '(19f6.1)') (brayasc2(k,n), n=1, nlats)
+!KA     read(963, '(19f6.1)') (braydes1(k,n), n=1, nlats)
+!KA     read(964, '(19f6.1)') (braydes2(k,n), n=1, nlats)
+    enddo
+
+    do k=2, 21
+     read(965, '(19f6.1)') (bmieasc(k,n), n=1, nlats)
+     read(966, '(19f6.1)') (bmiedes(k,n), n=1, nlats)
+    enddo
+
+!KA    close(961);close(962);close(963);close(964);close(965);close(966)
+    close(961);close(962);close(965);close(966)
+
+    if( ianldate < 2018100100 ) then   ! for Sept. 2018
+      brayasc = brayasc1
+      braydes = braydes1
+    else                               ! for Oct. 2018
+      brayasc = brayasc2
+      braydes = braydes2
+    endif
+ end subroutine read_L2B_bias_correction_
 
 end subroutine setupdw
 end module dw_setup
