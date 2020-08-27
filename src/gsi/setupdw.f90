@@ -525,24 +525,27 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 ! Set initial obs error to that supplied in BUFR stream.
      error = data(ier,i)
 
-!hliu-------------------------------------------------------------
-! Add regression-based error for Aeolus Rayleigh clear-sky winds;
-! Use global average for Mie cloudy winds for now.
-!hliu-------------------------------------------------------------
-
-   if (ictype(ikx)==48 ) then
-     if( icsubtype(ikx)==20) then                ! Rayleigh clear-sky
-      if( data(iazm, i) > 180.0*deg2rad ) then   ! ascending orbits
-       error = 1.16 + data(ier,i)
-      else                                       ! descending orbits
-       error = 1.25 + 0.94*data(ier,i)
-      endif
-     else if ( icsubtype(ikx)==11) then          ! Mie cloudy-sky
-       error = 3.0
-     else
-      ! these wind types expect large errors!
-    endif
-   endif
+!ILIANA - We are using ECMWF's OE approach (i.e. inflate HLOSEE)
+!         See read_lidar.f90 and ECMWF's Memo (Mike Rennie) 
+!!hliu-------------------------------------------------------------
+!! Add regression-based error for Aeolus Rayleigh clear-sky winds;
+!! Use global average for Mie cloudy winds for now.
+!!hliu-------------------------------------------------------------
+!
+!   if (ictype(ikx)==48 ) then
+!     if( icsubtype(ikx)==20) then                ! Rayleigh clear-sky
+!      if( data(iazm, i) > 180.0*deg2rad ) then   ! ascending orbits
+!       error = 1.16 + data(ier,i)
+!      else                                       ! descending orbits
+!       error = 1.25 + 0.94*data(ier,i)
+!      endif
+!     else if ( icsubtype(ikx)==11) then          ! Mie cloudy-sky
+!       error = 3.0
+!     else
+!      ! these wind types expect large errors!
+!    endif
+!   endif
+!!---End of hlui's OE block------------------------------------
     
 ! Removed repe_dw, but retained the "+ one" for reproducibility
 !  for ikx=100 or 101 - wm
@@ -556,17 +559,6 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
            error = data(ier,i) / cos(data(ielva,i))
         endif
      endif    
-
-!ILIANA -old error, replaced by hliu (see block above) 
-!     if (errtable_defined) error = get_error_(ictype(ikx),icsubtype(ikx),data(ihgt,i),error)
-!     if (error > tiny_r_kind) then     
-!         ratio_errors = error/abs(error + 1.0e6_r_kind*rhgh + r8*rlow)
-!         error = one/error
-!     else
-!         ratio_errors = zero
-!         error = zero
-!         muse(i) = .false.
-!     endif
 
      ratio_errors = error/abs(error + 1.0e6_r_kind*rhgh + r8*rlow)
      error = one/error
@@ -625,12 +617,13 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 
      wshear = (dwwindt - dwwindb) /(zobt0-zobb0)         ! m/s/m
      if( abs(wshear) > 5.0e-3 ) muse(i) = .false.
-       data(iuse,i) = 206
 
 !hliu-----------------------------------------------------------
 !  Apply bias corrections to L2B winds (Rayleigh and
 !  Mie) for Sept 12 - Oct. 16 2018. Biases are binned in 10 deg
 !  latitudinal belts for every L2B layers.  
+!---------------------------------------------------------------
+! ILIANA - updated BC for Aug 2019 are used in K.Apodaca's runs
 !---------------------------------------------------------------
    if(ictype(ikx)==48) then
       kray = minloc( abs(hght_ray-zob),1)
@@ -1035,8 +1028,8 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 
         rdiagbuf(17,ii) = data(ilob,i)         ! observation
         rdiagbuf(18,ii) = ddif0 !ddiff         ! ILIANA:O-B w/out BC ! obs-ges used in analysis 
-!KA        rdiagbuf(19,ii) = data(ilob,i)-dwwind  ! obs-ges w/o bias correction (future slot)
-        rdiagbuf(19,ii) = ddiff !ddif0         ! ILIANA:O-B with Hui's 2018 BC
+!KA     rdiagbuf(19,ii) = data(ilob,i)-dwwind  ! obs-ges w/o bias correction (future slot)
+        rdiagbuf(19,ii) = ddiff !ddif0         ! ILIANA:O-B with Hui2018 or Aug2019 BC
  
         rdiagbuf(20,ii) = factw                ! 10m wind reduction factor
         rdiagbuf(21,ii) = data(ielva,i)*rad2deg! elevation angle (degrees)
@@ -1108,7 +1101,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
            call nc_diag_metadata("Errinv_Final",            sngl(errinv_final)     )
 
            call nc_diag_metadata("Observation",                   sngl(data(ilob,i))          )
-           call nc_diag_metadata("Obs_Minus_Forecast_adjusted_HLiuBC2018",   sngl(ddiff)      )
+           call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   sngl(ddiff)      )
            call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", sngl(ddif0)                 )
 
            call nc_diag_metadata("Wind_Reduction_Factor_at_10m", sngl(factw)                  )
@@ -1299,49 +1292,71 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
     if(allocated(errtable)) deallocate(errtable)
     if(allocated(types))    deallocate(types)
   end subroutine final_vars_
-!
+
+
 !hliu: adopted from Mccarty ---------------
+
 subroutine read_L2B_bias_correction_   
 
      brayasc1 = 0.0; braydes1 = 0.0
      brayasc2 = 0.0; braydes2 = 0.0
      bmieasc  = 0.0; bmiedes  = 0.0
 
-   open(961, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.asc1',form='formatted')
+! KA FM-B (2019) period
+  open(961, &
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Ray_asc',form='formatted')
    open(962, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.asc2',form='formatted')
-   open(963, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.des1',form='formatted')
-   open(964, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.des2',form='formatted')
-
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Ray_des',form='formatted')
    open(965, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.asc',form='formatted')
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Mie_asc',form='formatted')
    open(966, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.des',form='formatted')
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Mie_des',form='formatted')
 
-    do k=2, 14
-     read(961, '(19f6.1)') (brayasc1(k,n), n=1, nlats)
-     read(962, '(19f6.1)') (brayasc2(k,n), n=1, nlats)
-     read(963, '(19f6.1)') (braydes1(k,n), n=1, nlats)
-     read(964, '(19f6.1)') (braydes2(k,n), n=1, nlats)
-    enddo
+! Hui FM-A (2018) period
+!   open(961, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.asc1',form='formatted')
+!   open(962, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.asc2',form='formatted')
+!   open(963, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.des1',form='formatted')
+!   open(964, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Rayleigh_Bias_correction.des2',form='formatted')
+!
+!   open(965, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.asc',form='formatted')
+!   open(966, &
+!file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.des',form='formatted')
 
-    do k=2, 21
+!KA FM-B (2019) period
+    do k=1, 24
+     read(961, '(19f6.1)') (brayasc(k,n), n=1, nlats)
+     read(962, '(19f6.1)') (braydes(k,n), n=1, nlats)
      read(965, '(19f6.1)') (bmieasc(k,n), n=1, nlats)
      read(966, '(19f6.1)') (bmiedes(k,n), n=1, nlats)
     enddo
+    close(961);close(962);close(965);close(966)
 
-    close(961);close(962);close(963);close(964);close(965);close(966)
+!! Hui FM-A (2018) period
+!    do k=2, 14
+!     read(961, '(19f6.1)') (brayasc1(k,n), n=1, nlats)
+!     read(962, '(19f6.1)') (brayasc2(k,n), n=1, nlats)
+!     read(963, '(19f6.1)') (braydes1(k,n), n=1, nlats)
+!     read(964, '(19f6.1)') (braydes2(k,n), n=1, nlats)
+!    enddo
+!    do k=2, 21
+!     read(965, '(19f6.1)') (bmieasc(k,n), n=1, nlats)
+!     read(966, '(19f6.1)') (bmiedes(k,n), n=1, nlats)
+!    enddo
+!    close(961);close(962);close(963);close(964);close(965);close(966)
+!
+!    if( ianldate < 2018100100 ) then   ! for Sept. 2018
+!      brayasc = brayasc1
+!      braydes = braydes1
+!    else                               ! for Oct. 2018
+!      brayasc = brayasc2
+!      braydes = braydes2
+!    endif
 
-    if( ianldate < 2018100100 ) then   ! for Sept. 2018
-      brayasc = brayasc1
-      braydes = braydes1
-    else                               ! for Oct. 2018
-      brayasc = brayasc2
-      braydes = braydes2
-    endif
  end subroutine read_L2B_bias_correction_
 
 end subroutine setupdw
