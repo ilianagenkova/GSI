@@ -609,9 +609,9 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 !      potential large simulation errors.
 !hliu------------------------------------------------------------
 ! KA commented out for FMB_stats exp
-     wshear = (dwwindt - dwwindb) /(zobt0-zobb0)         ! m/s/m
-     if( abs(wshear) > 5.0e-3 ) muse(i) = .false.
-       data(iuse,i) = 206
+!     wshear = (dwwindt - dwwindb) /(zobt0-zobb0)         ! m/s/m
+!     if( abs(wshear) > 5.0e-3 ) muse(i) = .false.
+!       data(iuse,i) = 206
 
 !hliu-----------------------------------------------------------
 !  Apply bias corrections to L2B winds (Rayleigh and
