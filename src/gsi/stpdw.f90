@@ -56,6 +56,7 @@ subroutine stpdw(dwhead,rval,sval,out,sges,nstep)
 !   2008-12-03  todling - changed handling of ptr%time
 !   2010-01-04  zhang,b - bug fix: accumulate penalty for multiple obs bins
 !   2010-05-13  todling - update to use gsi_bundle; update interface
+!   2020-08-11  K. Apodaca - add Jim Purser/X. Su  new  VarQC
 !
 !   input argument list:
 !     dwhead
@@ -75,7 +76,7 @@ subroutine stpdw(dwhead,rval,sval,out,sges,nstep)
 !
 !$$$
   use kinds, only: r_kind,i_kind,r_quad
-  use qcmod, only: nlnqc_iter,varqc_iter
+  use qcmod, only: nlnqc_iter,varqc_iter,nvqc,nvqc_aeolus !KA
   use constants, only: half,one,two,tiny_r_kind,cg_term,zero_quad,r3600
   use gsi_bundlemod, only: gsi_bundle
   use gsi_bundlemod, only: gsi_bundlegetpointer
@@ -94,8 +95,9 @@ subroutine stpdw(dwhead,rval,sval,out,sges,nstep)
 
 ! Declare local variables
   integer(i_kind) j1,j2,j3,j4,j5,j6,j7,j8,kk,ier,istatus
+  integer(i_kind) ibb,ikk !KA
   real(r_kind) valdw,facdw,w1,w2,w3,w4,w5,w6,w7,w8
-  real(r_kind) pg_dw,dw
+  real(r_kind) pg_dw,dw,var_jb !KA
   real(r_kind),dimension(max(1,nstep))::pen
   real(r_kind) cg_dw,wgross,wnotgross
   real(r_kind),pointer,dimension(:) :: su,sv
@@ -166,7 +168,21 @@ subroutine stpdw(dwhead,rval,sval,out,sges,nstep)
               pen(kk)= -two*log((exp(-half*pen(kk)) + wgross)/(one+wgross))
            end do
         endif
+!.      .       .       .
+! KA add Su's new call and Jim's new VarQC
 
+!  for Dr. Jim purser' mix model VQC
+        if(nvqc .and. nvqc_aeolus .and. dwptr%ib >0) then
+           ibb=dwptr%ib
+           ikk=dwptr%ik
+        else
+           ibb=0
+           ikk=0
+        endif
+
+        call vqc_stp(pen,nstep,pg_dw,cg_dw,var_jb,ibb,ikk)
+!.      .       .       .
+                
         out(1) = out(1)+pen(1)*dwptr%raterr2
         do kk=2,nstep
            out(kk) = out(kk)+(pen(kk)-pen(1))*dwptr%raterr2

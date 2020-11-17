@@ -23,7 +23,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
 
   use qcmod, only: dfact,dfact1,npres_print,ptop,pbot
-
+  use qcmod, only: nvqc, nvqc_aeolus !KA
   use gridmod, only: nsig,get_ijk
 
   use guess_grids, only: hrdifsig,geop_hgtl,ges_lnprsl,&
@@ -57,7 +57,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
   use jfunc, only: last, jiter, miter, jiterstart
   use convinfo, only: nconvtype,cermin,cermax,cgross,cvar_b,cvar_pg,ictype
-  use convinfo, only: icsubtype
+  use convinfo, only: icsubtype,ibeta,ikapa !KA
 
   use m_dtime, only: dtime_setup, dtime_check
 
@@ -151,6 +151,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 !   capability
 !   2019-07-26  hliu  - add Bias correction, QCs, and errors of Aeolus L2B HLOS
 !   wind component
+!   2020-08-11  K. Apodaca - adopt J. Purser/X. Su new VarQC for Aeolus L2B HLOS wind
 !
 ! !REMARKS:
 !   language: f90
@@ -187,7 +188,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
   real(r_kind) residual,obserrlm,obserror,ratio,val2
   real(r_kind) ress,ressw
   real(r_kind) val,valqc,ddiff,rwgt,sfcr,skint,ddif0
-  real(r_kind) cg_dw,wgross,wnotgross,wgt,arg,term,exp_arg,rat_err2
+  real(r_kind) cg_dw,cvar,wgross,wnotgross,wgt,arg,term,exp_arg,var_jb,rat_err2 !KA
   real(r_kind) errinv_input,errinv_adjst,errinv_final
   real(r_kind) err_input,err_adjst,err_final,tfact
   real(r_kind),dimension(nele,nobs):: data
@@ -197,11 +198,12 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
   integer(i_kind) mm1,ikxx,nn,isli,ibin,ioff,ioff0
   integer(i_kind) jsig
-  integer(i_kind) i,nchar,nreal,k,j,k1,jj,l,ii,k2
+  integer(i_kind) i,nchar,nreal,k,j,k1,jj,l,ii,k2,ijb !KA
   integer(i_kind) ier,ilon,ilat,ihgt,ilob,id,itime,ikx,iatd,inls,incls,isatid
   integer(i_kind) iazm,ielva,iuse,ilate,ilone,istat
   integer(i_kind) ipres,idwdp,itemp,idwdT,iback,idwdB
   integer(i_kind) idomsfc,isfcr,iff10,iskint
+  integer(i_kind) ibb,ikk,ihil !KA
 
   real(r_kind) :: delz
   type(sparr2) :: dhx_dx
@@ -314,6 +316,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW successfully'
   iback  = 26  ! index of Retr. Pressure
   idwdB  = 27  ! index of Deriv. of wind w.r.t. Pressure
 
+
   do i=1,nobs
      muse(i)=nint(data(iuse,i)) <= jiter
   end do
@@ -369,7 +372,6 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
         dlat=data(ilat,i)
         dlon=data(ilon,i)
         dpres=data(ihgt,i)
- 
         ikx=nint(data(ikxx,i))
      endif
 
@@ -687,9 +689,15 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 
      if (ratio_errors*error <= tiny_r_kind) muse(i) = .false.
      if (nobskeep>0 .and. luse_obsdiag) call obsdiagNode_get(my_diag, jiter=nobskeep, muse=muse(i))
+
+!KA inquire aboute Oberror Tuning and Perturb Obs section
  
-!    Compute penalty terms
+!       .       .       .
+! KA add nvqc for Aeolus
+!    Compute penalty terms 
      val   = error*ddiff
+     if (nvqc .and. nvqc_aeolus .and. ibeta(ikx) >0  ) ratio_errors=0.8_r_kind*ratio_errors
+
      if(luse(i))then
         val2     = val*val
         exp_arg  = -half*val2
@@ -709,6 +717,32 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
         endif
         valqc = -two*rat_err2*term
 
+
+!       .       .       .
+! KA add nvqc for Aeolus
+
+
+!    Compute penalty terms under new variational QC
+
+        if (nvqc .and. nvqc_aeolus) then     
+            ibb=ibeta(ikx)  
+            ikk=ikapa(ikx)  
+        else               
+            ibb=0          
+            ikk=0           
+        endif       
+   
+         call vqc_setup(val2,ratio_errors,error,cvar,&
+                        cg_dw,ibb,ikk,var_jb,rat_err2,wgt,valqc)
+        
+        write(6,*)'SETUPDW:  vqc_setup called in SETUPDW successfully'
+
+        rwgt = wgt/wgtlim
+
+        write(6,*)'SETUPDW, wgt, rwgt, wgtlim=',wgt,rwgt,wgtlim
+
+!KA
+!       .       .       .
 
 !       Accumulate statistics for obs belonging to this task
         if(muse(i))then
@@ -778,6 +812,8 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
         my_head%time   = dtime
         my_head%b      = cvar_b(ikx)
         my_head%pg     = cvar_pg(ikx)
+        my_head%ib     = ibeta(ikx)              !KA VarQC broadness
+        my_head%ik     = ikapa(ikx)              !KA VarQC convexity
         my_head%cosazm = cosazm                  ! v factor
         my_head%sinazm = sinazm                  ! u factor
         my_head%luse   = luse(i)
@@ -999,9 +1035,12 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
         rdiagbuf(16,ii) = errinv_final         ! final inverse observation error
 
         rdiagbuf(17,ii) = data(ilob,i)         ! observation
-        rdiagbuf(18,ii) = ddif0 !ddiff         ! ILIANA:O-B w/out BC ! obs-ges used in analysis
-!KA        rdiagbuf(19,ii) = data(ilob,i)-dwwind  ! obs-ges w/o bias correction!(future slot)
-        rdiagbuf(19,ii) = ddiff !ddif0         ! ILIANA:O-B with Hui's 2018 BC
+        rdiagbuf(18,ii) = ddiff                ! O-B with ILIANA's FM-B BC 
+        rdiagbuf(19,ii) = ddif0                ! O-B w/o BC
+!        rdiagbuf(18,ii) = ddif0 !ddiff         ! ILIANA:O-B w/out BC ! obs-ges used in analysis
+!!KA        rdiagbuf(19,ii) = data(ilob,i)-dwwind  ! obs-ges w/o bias correction!(future slot)
+!        rdiagbuf(19,ii) = ddiff !ddif0         ! ILIANA:O-B with Hui's 2018 BC
+                                               ! for FM-A and Iliana's 2019 BC for FM-B 
         rdiagbuf(20,ii) = factw                ! 10m wind reduction factor
         rdiagbuf(21,ii) = data(ielva,i)*rad2deg! elevation angle (degrees)
         rdiagbuf(22,ii) = data(iazm,i)*rad2deg ! bearing or azimuth (degrees)
@@ -1011,7 +1050,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
         rdiagbuf(26,ii) = data(ilob,i)         ! line of sight component of wind orig.
 
         rdiagbuf(27,ii) = 1.e+10_r_single      ! ges ensemble spread (filled in by EnKF)
-
+        rdiagbuf(28,ii) = wgt                  ! New VarQC weight
         ioff=ioff0
         if (lobsdiagsave) then
            do jj=1,miter 
@@ -1060,6 +1099,8 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
            call nc_diag_metadata("Prep_QC_Mark",            missing                )
            call nc_diag_metadata("Prep_Use_Flag",           sngl(data(iuse,i))     )
 !          call nc_diag_metadata("Nonlinear_QC_Var_Jb",     var_jb                 )
+!KA
+           call nc_diag_metadata("NVQC_QC_Wgt",             sngl(wgt)              )
            call nc_diag_metadata("Nonlinear_QC_Rel_Wgt",    sngl(rwgt)             )                 
            if(muse(i)) then
               call nc_diag_metadata("Analysis_Use_Flag",    sngl(one)              )
@@ -1111,7 +1152,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
                  endif
               enddo
    
-              call nc_diag_data2d("ObsDiagSave_iuse",     obsdiag_iuse                )
+              call nc_diag_data2d("ObsDiagSave_iuse",     obsdiag_iuse   )
               call nc_diag_data2d("ObsDiagSave_nldepart", odiag%nldepart )
               call nc_diag_data2d("ObsDiagSave_tldepart", odiag%tldepart )
               call nc_diag_data2d("ObsDiagSave_obssen",   odiag%obssen   )             
@@ -1274,13 +1315,13 @@ subroutine read_L2B_bias_correction_
 
 ! KA FM-B (2019) period
   open(961, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Ray_asc',form='formatted')
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019081400_2019081918/Ray_asc',form='formatted')
    open(962, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Ray_des',form='formatted')
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019081400_2019081918/Ray_des',form='formatted')
    open(965, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Mie_asc',form='formatted')
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019081400_2019081918/Mie_asc',form='formatted')
    open(966, &
-file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080812/Mie_des',form='formatted')
+file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019081400_2019081918/Mie_des',form='formatted')
 
 ! Hui FM-A (2018) period
 !   open(961, &
@@ -1298,7 +1339,7 @@ file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrectio
 !file='/scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/bias_correction/2018/Mie_Bias_correction.des',form='formatted')
 
 !KA FM-B (2019) period
-    do k=1, 24 
+    do k=1, 23 
      read(961, '(19f6.1)') (brayasc(k,n), n=1, nlats)
      read(962, '(19f6.1)') (braydes(k,n), n=1, nlats)
      read(965, '(19f6.1)') (bmieasc(k,n), n=1, nlats)

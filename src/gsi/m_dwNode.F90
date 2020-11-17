@@ -11,6 +11,7 @@ module m_dwNode
 ! program history log:
 !   2016-05-18  j guo   - added this document block for the initial polymorphic
 !                         implementation.
+!   2020-11-17  K. Apodaca - add New VarQC broadness and convexity parameters
 !
 !   input argument list: see Fortran 90 style document below
 !
@@ -43,6 +44,8 @@ module m_dwNode
      !real(r_kind)    :: time                !  observation time in sec     
      real(r_kind)    :: b      =0._r_kind    !  variational quality control parameter
      real(r_kind)    :: pg     =0._r_kind    !  variational quality control parameter
+     integer(i_kind) :: ib     =0._r_kind    !  new variational quality control parameter
+     integer(i_kind) :: ik     =0._r_kind    !  new variational quality control parameter
      real(r_kind)    :: cosazm =0._r_kind    !  v factor
      real(r_kind)    :: sinazm =0._r_kind    !  u factor
      real(r_kind)    :: wij(8) =0._r_kind    !  horizontal interpolation weights
@@ -162,6 +165,8 @@ _ENTRY_(myname_)
                                 aNode%raterr2, &
                                 aNode%b      , &
                                 aNode%pg     , &
+                                aNode%ib     , & !KA
+                                aNode%ik     , & !KA
                                 aNode%cosazm , &
                                 aNode%sinazm , &
                                 aNode%dlev   , &
@@ -200,6 +205,8 @@ _ENTRY_(myname_)
                                 aNode%raterr2, &
                                 aNode%b      , &
                                 aNode%pg     , &
+                                aNode%ib     , & !KA
+                                aNode%ik     , & !KA
                                 aNode%cosazm , &
                                 aNode%sinazm , &
                                 aNode%dlev   , &

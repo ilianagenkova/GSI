@@ -91,11 +91,12 @@ subroutine intdw_(dwhead,rval,sval)
   use kinds, only: r_kind,i_kind
   use constants, only: half,one,tiny_r_kind,cg_term,r3600
   use obsmod, only: lsaveobsens,l_do_adjoint,luse_obsdiag
-  use qcmod, only: nlnqc_iter,varqc_iter
+  use qcmod, only: nlnqc_iter,varqc_iter,nvqc,nvqc_aeolus,hub_norm !KA
   use jfunc, only: jiter
   use gsi_bundlemod, only: gsi_bundle
   use gsi_bundlemod, only: gsi_bundlegetpointer
   use gsi_4dvar, only: ladtest_obs
+  use pvqc, only: vqch,vqcs !KA
   implicit none
 
 ! Declare passed variables
@@ -105,8 +106,10 @@ subroutine intdw_(dwhead,rval,sval)
 
 ! Declare local variables
   integer(i_kind) j1,j2,j3,j4,j5,j6,j7,j8,ier,istatus
+  integer(i_kind) ib,ik !KA
 ! real(r_kind) penalty
   real(r_kind) val,valu,valv,w1,w2,w3,w4,w5,w6,w7,w8,pg_dw
+  real(r_kind) gdw,wdw,w_dw !KA
   real(r_kind) cg_dw,p0,grad,wnotgross,wgross
   real(r_kind),pointer,dimension(:) :: su,sv
   real(r_kind),pointer,dimension(:) :: ru,rv
@@ -175,12 +178,28 @@ subroutine intdw_(dwhead,rval,sval)
               wgross = pg_dw*cg_dw/wnotgross
               p0   = wgross/(wgross+exp(-half*dwptr%err2*val**2))
               val = val*(one-p0)
+           
+
+!KA add new VarQC
+           else if (nvqc .and. nvqc_aeolus .and. dwptr%ib >0) then
+              ib=dwptr%ib
+              ik=dwptr%ik
+              wdw=val*dwptr%err2
+              if(hub_norm) then
+                 call vqch(ib,ik,wdw,gdw,w_dw)
+              else
+                 call vqcs(ib,ik,wdw,gdw,w_dw)
+              endif
+              grad =w_dw*wdw * dwptr%err2 * dwptr%raterr2
+           else
+              grad = val * dwptr%raterr2 * dwptr%err2
            endif
+
+!KA    .       .       .
+           
 
            if( ladtest_obs)  then 
               grad = val 
-           else
-              grad = val * dwptr%raterr2 * dwptr%err2
            end if
         endif
 

@@ -78,6 +78,7 @@ module qcmod
 !   2019-06-10  h. liu - add Geostationary satellites CSR data QC to replace qc_abi,qc_seviri
 !   2019-09-29  X.Su   - add troflg and lat_c for hilbert curve tunning
 !   2019-04-19  eliu    - add QC flag for cold-air outbreak 
+!   2020-11-17  Kari Apodaca - add logical flag 4 Aeolus VarQC
 !
 ! subroutines included:
 !   sub init_qcvars
@@ -120,6 +121,7 @@ module qcmod
 !   def njqc -  logical flag (T=Purser's nonlinear qc on, F=off)
 !   def vqc -  logical flag (T=EC vqc on, F=off)
 !   def nvqc -  logical flag (T=new vqc on, F=off)
+!   def nvqc_aeolus -  logical flag (T=new vqc 4Aeolus ON, F=OFF)
 !   def hub_norm -  logical flag (T=mix vqc model, F=logistic model)
 !   def noiqc        - logic flag for oiqc, noiqc='false' with oiqc on
 !
@@ -181,7 +183,7 @@ module qcmod
   public :: qc_amsr2
   public :: qc_saphir
 ! set passed variables to public
-  public :: npres_print,nlnqc_iter,varqc_iter,pbot,ptop,c_varqc,njqc,vqc,nvqc,hub_norm
+  public :: npres_print,nlnqc_iter,varqc_iter,pbot,ptop,c_varqc,njqc,vqc,nvqc,nvqc_aeolus,hub_norm
   public :: use_poq7,noiqc,vadfile,dfact1,dfact,erradar_inflate
   public :: pboto3,ptopo3,pbotq,ptopq,newvad,tdrerr_inflate
   public :: igood_qc,ifail_crtm_qc,ifail_satinfo_qc,ifail_interchan_qc,&
@@ -198,7 +200,7 @@ module qcmod
   public :: lat_c
   public :: nrand 
 
-  logical nlnqc_iter,njqc,vqc,nvqc,hub_norm
+  logical nlnqc_iter,njqc,vqc,nvqc,nvqc_aeolus,hub_norm
   logical noiqc
   logical use_poq7
   logical qc_noirjaco3
@@ -419,6 +421,7 @@ contains
     njqc=.false.
     vqc=.false.
     nvqc=.false.
+    nvqc_aeolus=.false.
     hub_norm=.true.
     c_varqc=one
 
