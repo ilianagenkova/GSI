@@ -170,7 +170,6 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
 
 ! Time offset
   call time_4dvar(idate,toff)
-  !ILIANA
   write(6,*) 'READ_LIDAR:READ_LIDAR idate= ' , idate
   write(6,*) 'READ_LIDAR:READ_LIDAR iadate= ' , iadate
   write(6,*) 'READ_LIDAR:READ_LIDAR  toff= ' , toff
@@ -206,7 +205,7 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
      time_correction=zero
   end if
 
-  !ILIANA
+!ILIANA
   write(6,*)'READ_LIDAR:READ_LIDAR time offset toff is ',toff,' hours'
   write(6,*)'READ_LIDAR:READ_LIDAR time_correction: ',time_correction
 
@@ -227,7 +226,7 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
          call read_aeolus_
          nread = nread + 1
      else 
-         cycle obsloop
+        cycle obsloop
      endif
 ! End of bufr read loop
   end do obsloop
@@ -447,8 +446,8 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
         return
         endif
      else
-         !ILIANA - this is only true for DWL data, see: read_dwldat_
-         !time=hdr(4) + time_correction
+        !ILIANA - this is only true for DWL data, see: read_dwldat_
+        !time=hdr(4) + time_correction
         time = float (nmind - minan)*r60inv + time_correction 
    !ILIANA - for diagnostics purposes
    write(6,*)'READ_LIDAR:READ_AEOLUS Non-4dvar branch, time', time
@@ -486,7 +485,7 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
 !ILIANA - end of obsolete block
 
 
-! more to do? - jumping to data (leftover comment from Will)
+! more to do? - jumping to data
 
 !    Read geolocation sequences (WM)
 !     - the bufr table that I developed can access the horizontal and vertical information
@@ -513,6 +512,13 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
      vert_seq_str = 'VCENT'
      call ufbseq(lunin,vert_seq,n_vert_seq,1,iret,vert_seq_str)
 
+!ILIANA - eliminate winds by height: Height<250m 
+     if ( vert_seq(2)<=250 ) then                     ! Height<250m 
+        nex1=nex1+1
+        qc_flag=qc_flag+1
+        !return
+     endif    
+
 !    read horizontal weighted centroid information
 !    read vertical weighted centroid information
      horiz_seq_str = 'HCENT'
@@ -524,21 +530,6 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
      ! 1000 ms-1 is chosen arbitrarily, it appears unrealistic obs are reported as 1.0e11.  
      ! If the obs magnitude is larger than threshhold; cycle loop on unrealistic obs
 
-!ILIANA - HLOS Speed Outliers check
-     if ( aeolusd(1)<-100 .or. aeolusd(1)>100  ) then !remove HLOS<-100 & >100m/s
-        !return  ! Consider "usage=101._r_kind" instead of "return"
-     endif
-
-! Static QC from ECMWF
-! https://www.ecmwf.int/en/elibrary/19538-nwp-impact-aeolus-level-2b-winds-ecmwf
-
-!ILIANA - eliminate winds by height: Height<250m 
-     if ( vert_seq(2)<=250 ) then                     ! Height<250m 
-        nex1=nex1+1
-        qc_flag=qc_flag+1
-        !return
-     endif
-
 !ILIANA - eliminate winds by height: Rayleigh & Pres>850hPa 
      if ( hdr(9)==1 .and. aeolusd(4)>85000.0 ) then ! Rayleigh & Pres>850hPa
         nex2=nex2+1
@@ -546,9 +537,11 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
         !return
      endif
 
+
 !ILIANA - eliminate winds with invalid overall confidence flag
 !         CONFLG- Confidence flag, 0=VALID, 1=INVALID measurement
-     if (aeolusd(3)/=0 ) then 
+     if (aeolusd(3)<0 .or. aeolusd(3)>0  &
+         ) then 
         nex3=nex3+1
         qc_flag=qc_flag+100
         !return
@@ -587,12 +580,22 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
         !return
      endif
 
-!ILIANA - Blacklist 3 Sept 2019 (for experiments during Aug - Dec 2019)
-     if( idate5(1)==2019 .and. idate5(2)==9 .and.  idate5(3)==3 )then
-        write(6,*)'READ_LIDAR:READ_AEOLUS  Blacklisted date(s) AEOLUS: ', idate5(1), idate5(2), idate5(3)
-        nex8=nex8+1
-        qc_flag=qc_flag+10000000
-        return
+!ILIANA - inflate OE 
+     if (hdr(9) == 0) then ! Mie
+        aeolusd(2)=2*aeolusd(2)
+        endif
+     if (hdr(9) == 1) then ! Rayleigh
+        aeolusd(2)=1.4*aeolusd(2)
+        endif
+
+!ILIANA - Blacklist 3 Sept 2019 (any others??)
+     if (idate5(1)==2019 .and. idate5(2)==9 .and.  idate5(3)==3 )then
+         if ((idate5(4) .gt. 7) .and. (idate5(4) .lt. 15) )then !PJM added to account for specific hours when data was bad
+              write(6,*)'READ_LIDAR:READ_AEOLUS  Blacklisted date(s) AEOLUS: ', idate5(1), idate5(2), idate5(3)
+              nex8=nex8+1
+              qc_flag=qc_flag+10000000
+              return
+         endif
      endif
 
 !ILIANA - eliminate Rayleigh winds by horizontal accumulation length <60km
@@ -603,7 +606,7 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
         !return
      endif
 
-!ILIANA - eliminate top bin Obs, threshold are set empirically for Aug2019
+!ILIANA - eliminate top bin Observations, thresholds are empirically determined 
      if (hdr(9) == 0 .and.  &  ! Mie
          vert_seq(2)>15000) then
         return
@@ -613,15 +616,12 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
         return
      endif
 
-!ILIANA - inflate HLSWEE and use as OE 
-!ECMWF proposes to inflate the HLOS Error and use as OE
-!https://www.ecmwf.int/en/elibrary/19538-nwp-impact-aeolus-level-2b-winds-ecmwf
-     if (hdr(9) == 0) then ! Mie
-        aeolusd(2)=2*aeolusd(2)
-        endif
-     if (hdr(9) == 1) then ! Rayleigh
-        aeolusd(2)=1.4*aeolusd(2)
-        endif
+
+     if (abs(aeolusd(1)) > 1000.0_r_kind) return ! check if observation is realistic 
+                                                 !  - 1000 ms-1 chosen somewhat arbitrarily, it appears 
+                                                 !    unrealistic obs are reported as 1.0e11.  If the
+                                                 !    magnitude is larger than threshhold; cycle loop on 
+                                                 !    unrealistic observation
 
 !    Do lat/lon handling
      dlat_earth = horiz_seq(2)
@@ -658,29 +658,18 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
      call deter_sfc2(dlat_earth,dlon_earth,t4dv,idomsfc,tsavg,ff10,sfcr)
 
 
-! Set usage flag:
+
+!    set usage flag:
 !       in bufr, conflg == 0: valid
 !                       == 1: invalid
 !       here, to setupdw:
 !                usage == 0: use
 !                usage == 100: don't use - off in convinfo
 !                usage == 101: don't use - invalid in bufr
-     if(icuse(ikx)== 1) usage = zero
-     if(icuse(ikx)==-1) usage=100._r_kind
-     if(icuse(ikx)==0 .or. icuse(ikx)==-3 .or. aeolusd(3)>0)usage=101._r_kind
-
-!ILIANA
-!Hard set MieClear and RayleighCloudy to monitored(100) or not used(101) 
-!This is a safety check in case of an error in global_convinfo.txt
-!If suitable QC for these subtypes is developed pls comment out this block
-!Subtype:  10==Mie,Clear       11==Mie,Cloudy 
-!          20==Rayleigh,Clear  21==Rayleigh,Cloudy
-     if ( hdr(9)==1 .and. subtype==21 ) then ! do not use Rayleigh Cloudy
-        usage=100._r_kind
-     endif
-     if ( hdr(9)==0 .and. subtype==10 ) then ! do not use Mie Clear
-        usage=100._r_kind
-     endif
+     usage = zero
+     if(icuse(ikx) < 0)usage=100._r_kind
+     if(aeolusd(3) > 0)usage=101._r_kind
+!ILIANA - make sure that the code just above is in sync with my QC
 
 
 !     hdstr = 'SAID SIID YEAR MNTH DAYS HOUR MINU SECW RCVCH LL2BCT'
@@ -720,7 +709,7 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
      cdata_all(25,ndata)=aeolusd(8)            ! retrieval derivative of wind w.r.t. Temperature
      cdata_all(26,ndata)=aeolusd(6)            ! retrieval Backscatter
      cdata_all(27,ndata)=aeolusd(9)            ! retrieval derivative of wind w.r.t. Backscatter
-
+!ILIANA -test
 !ILIANA
 write(6,*)'READ_LIDAR:READ_AEOLUS nex1,..,nex9, qc_flag',  &
           nex1, nex2, nex3, nex4, nex5, nex6, nex7, nex8, nex9, qc_flag
@@ -731,4 +720,3 @@ write(6,*)'READ_LIDAR:READ_AEOLUS  cdata_all POPULATED SUCCESSFULLY '
   end subroutine read_aeolus_
 
 end subroutine read_lidar
-
