@@ -436,7 +436,11 @@ subroutine read_obs_check (lexist,filename,jsatid,dtype,minuse,nread)
                trim(subset) == 'NC005065' .or. trim(subset) == 'NC005066' .or.& 
                trim(subset) == 'NC005030' .or. trim(subset) == 'NC005031' .or.& 
                trim(subset) == 'NC005032' .or. trim(subset) == 'NC005034' .or.&
-               trim(subset) == 'NC005039' .or. trim(subset) == 'NC005091') then
+               trim(subset) == 'NC005039' .or. &
+               trim(subset) == 'NC005090' .or. trim(subset) == 'NC005091' .or.&
+               trim(subset) == 'NC005067' .or. trim(subset) == 'NC005068' .or. trim(subset) == 'NC005069' .or.&
+               trim(subset) == 'NC005081' .or. &
+               trim(subset) == 'NC005072' ) then
                lexist = .true.
                exit loop
             endif
@@ -1844,12 +1848,9 @@ subroutine read_obs(ndata,mype)
                call warn('read_obs','                string =',trim(string))
              endif
 
-             write(6,8000) adjustl(string),infile,obstype,sis,nread,ithin,&
-                  rmesh,isfcalc,nouse,npe_sub(i)
-8000         format(1x,a22,': file=',a15,&
-                  ' type=',a10,  ' sis=',a20,  ' nread=',i10,&
-                  ' ithin=',i2, ' rmesh=',f11.6,' isfcalc=',i2,&
-                  ' nkeep=',i10,' ntask=',i3)
+             write(6, '(a,'': file='',a,'' type='',a,'' sis='',a,'' nread='',i10,&
+                  '' ithin='',i2,'' rmesh='',f11.6,'' isfcalc='',i2,'' nkeep='',i10,&
+                  '' ntask='',i3)')
 
           endif
        endif task_belongs
