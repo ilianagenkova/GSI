@@ -244,7 +244,7 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
 
 
 ! hliu ------ for Aeolus L2B wind bias correction ---------
-
+  logical bc_flag
   integer, parameter:: nlats=19, nlays= 24
 
   real(r_single) brayasc1(nlays, nlats), braydes1(nlays, nlats)
@@ -268,9 +268,10 @@ subroutine setupdw(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_diagsa
       hght_ray = hght_ray *1000.0   !(m)
       hght_mie = hght_mie *1000.0   !(m)
 
-
-   call read_L2B_bias_correction_ !hliu
-
+   bc_flag=.false. !.true. use BC;.false. don't use BC; ILIANA
+   if (bc_flag) then
+    call read_L2B_bias_correction_ !hliu
+   endif
 
 ! Check to see if required guess fields are available
   call check_vars_(proceed)
@@ -615,6 +616,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
 !     if( abs(wshear) > 5.0e-3 ) muse(i) = .false.
 !       data(iuse,i) = 206
 
+   if (bc_flag) then
 !hliu-----------------------------------------------------------
 !  Apply bias corrections to L2B winds (Rayleigh and
 !  Mie) for Sept 12 - Oct. 16 2018. Biases are binned in 10 deg
@@ -643,6 +645,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW : NOT EMPTY :) '
      endif
    endif
 !hliu -------------------------------------------------------
+   endif
 
     iz = max(1, min( int(dpres), nsig))
      delz = max(zero, min(dpres - float(iz), one))

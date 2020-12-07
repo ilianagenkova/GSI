@@ -582,10 +582,12 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
 
 !ILIANA - inflate OE 
      if (hdr(9) == 0) then ! Mie
-        aeolusd(2)=2*aeolusd(2)
+        !aeolusd(2)=2*aeolusd(2) ! Aug2020 Memo M.Rennie ECMWF
+        aeolusd(2)=1.25*aeolusd(2)+2 ! Cal/Val Nov2020 M.Rennie ECMWF
         endif
      if (hdr(9) == 1) then ! Rayleigh
-        aeolusd(2)=1.4*aeolusd(2)
+        !aeolusd(2)=1.4*aeolusd(2) ! Aug2020 Memo M.Rennie ECMWF
+        aeolusd(2)=1.4*aeolusd(2) ! Cal/Val Nov2020 M.Rennie ECMWF
         endif
 
 !ILIANA - Blacklist 3 Sept 2019 (any others??)
