@@ -87,7 +87,7 @@
   use qcmod, only: dfact,dfact1,create_qcvars,destroy_qcvars,&
       erradar_inflate,tdrerr_inflate,use_poq7,qc_satwnds,&
       init_qcvars,vadfile,noiqc,c_varqc,qc_noirjaco3,qc_noirjaco3_pole,&
-      buddycheck_t,buddydiag_save,njqc,vqc,nvqc,hub_norm,vadwnd_l2rw_qc, &
+      buddycheck_t,buddydiag_save,njqc,vqc,nvqc,nvqc_aeolus,hub_norm,vadwnd_l2rw_qc, &
       pvis,pcldch,scale_cv,estvisoe,estcldchoe,vis_thres,cldch_thres,cao_check
   use qcmod, only: troflg,lat_c,nrand
   use pcpinfo, only: npredp,diag_pcp,dtphys,deltim,init_pcp
@@ -439,6 +439,7 @@
 !                          model (e.g., HWRF) aircraft recon dynamic
 !                          observation error (DOE) specification to
 !                          GSI namelist level (beneath obsmod.F90).
+!  12-03-2020 Apodaca Add nvqc_aeolus to apply VarQC (nvqc) for Aeolus
 !
 !EOP
 !-------------------------------------------------------------------------
@@ -882,6 +883,7 @@
 !     njqc  -  When true, use Purser''s non linear QC
 !     vqc   -  when true, use ECMWF's non linear QC
 !     nvqc   -  when true, use Dr. Purser's variational QC 
+!     nvqc_aeolus   -  when true, use Dr. Purser's variational QC for Aeolus HLOS
 !     hub_norm - when true,use huber norm format distribution 
 !     closest_obs- when true, choose the timely closest surface observation from
 !     multiple observations at a station.  Currently only applied to Ceiling
@@ -941,7 +943,7 @@
   
   namelist/obsqc/dfact,dfact1,erradar_inflate,tdrerr_inflate,oberrflg,&
        vadfile,noiqc,c_varqc,blacklst,use_poq7,hilbert_curve,tcp_refps,tcp_width,&
-       tcp_ermin,tcp_ermax,qc_noirjaco3,qc_noirjaco3_pole,qc_satwnds,njqc,vqc,nvqc,hub_norm,troflg,lat_c,nrand,&
+       tcp_ermin,tcp_ermax,qc_noirjaco3,qc_noirjaco3_pole,qc_satwnds,njqc,vqc,nvqc,nvqc_aeolus,hub_norm,troflg,lat_c,nrand,&
        aircraft_t_bc_pof,aircraft_t_bc,aircraft_t_bc_ext,biaspredt,upd_aircraft,cleanup_tail,&
        hdist_aircraft,buddycheck_t,buddydiag_save,vadwnd_l2rw_qc,  &
        pvis,pcldch,scale_cv,estvisoe,estcldchoe,vis_thres,cldch_thres,cld_det_dec2bin, &
@@ -1423,10 +1425,12 @@
         c_varqc=c_varqc_new
      end if
   end if
+!KA
   if(ltlint) then
-     if(vqc .or. njqc .or. nvqc)then
+     if(vqc .or. njqc .or. nvqc .or. nvqc_aeolus)then
        vqc = .false.
        nvqc = .false.
+       nvqc_aeolus = .false.
        njqc = .false.
        if(mype == 0) write(6,*) ' ltlint = true, so vqc and njqc must be false'
      end if

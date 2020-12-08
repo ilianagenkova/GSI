@@ -122,6 +122,7 @@ PREPQC=${PREPQC:-${COMIN_OBS}/${OPREFIX}prepbufr${OSUFFIX}}
 PREPQCPF=${PREPQCPF:-${COMIN_OBS}/${OPREFIX}prepbufr.acft_profiles${OSUFFIX}}
 NSSTBF=${NSSTBF:-${COMIN_OBS}/${OPREFIX}nsstbufr${OSUFFIX}}
 SATWND=${SATWND:-${COMIN_OBS}/${OPREFIX}satwnd.tm00.bufr_d${OSUFFIX}}
+#AEOLUS=${AEOLUS:-${COMIN_OBS}/${OPREFIX}aeolus.tm00.bufr_d${OSUFFIX}}
 OSCATBF=${OSCATBF:-${COMIN_OBS}/${OPREFIX}oscatw.tm00.bufr_d${OSUFFIX}}
 RAPIDSCATBF=${RAPIDSCATBF:-${COMIN_OBS}/${OPREFIX}rapidscatw.tm00.bufr_d${OSUFFIX}}
 GSNDBF=${GSNDBF:-${COMIN_OBS}/${OPREFIX}goesnd.tm00.bufr_d${OSUFFIX}}
@@ -533,6 +534,7 @@ $NLN $B1AVHPM          avhpmbufr
 $NLN $AHIBF            ahibufr
 $NLN $ABIBF            abibufr
 $NLN $HDOB             hdobbufr
+#$NLN $AEOLUS           aeolusbufr
 
 [[ $DONST = "YES" ]] && $NLN $NSSTBF nsstbufr
 
@@ -543,6 +545,15 @@ $NLN $GBIASPC  satbias_pc
 $NLN $GBIASAIR aircftbias_in
 $NLN $GRADSTAT radstat.gdas
 
+#Link aeolus L1B or L2B bias correction data and BUFR files
+#$NLN /scratch2/NAGAPE/aoml-osse/Karina.Apodaca/projects/aeolus/DATA/bias_correction/2018/*  .
+#$NLN /scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080300_2019080718/*  .
+#$NLN /scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019080800_2019081318/*  .
+#$NLN /scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019081400_2019081918/*  .
+#$NLN /scratch1/NCEPDEV/da/Iliana.Genkova/prAeolus_20190501_branch/BiasCorrection_IG/2019082000_2019082400/*  .
+#$NLN /scratch1/NCEPDEV/da/Iliana.Genkova/save/Aeolus/Data/2019/08/NCEP_BUFR_tight_bins/Aeolus_ESA_${CDATE}.ncep aeolusbufr
+#$NLN /scratch1/NCEPDEV/da/Iliana.Genkova/save/Aeolus/Data/2019/09/NCEP_BUFR_tight_bins/Aeolus_ESA_${CDATE}.ncep aeolusbufr
+$NLN /scratch1/BMC/qosap/Peter.Marinescu/HWRF_AeoTest/BUFR/ProcessAeolus/OutputNCEPBUFR/Aeolus_ESA_${CDATE}.ncep aeolusbufr
 ##############################################################
 # Required model guess files
 $NLN $ATMG03 sigf03
@@ -799,7 +810,7 @@ cat > gsiparm.anl << EOF
 /
 &OBSQC
   dfact=0.75,dfact1=3.0,noiqc=.true.,oberrflg=.false.,c_varqc=0.02,
-  use_poq7=.true.,qc_noirjaco3_pole=.true.,vqc=.false.,nvqc=.true.,
+  use_poq7=.true.,qc_noirjaco3_pole=.true.,vqc=.false.,nvqc=.true.,nvqc_aeolus=.false.,
   aircraft_t_bc=.true.,biaspredt=1.0e5,upd_aircraft=.true.,cleanup_tail=.true.,
   tcp_width=70.0,tcp_ermax=7.35,
   $OBSQC
@@ -825,6 +836,7 @@ OBS_INPUT::
    prepbufr       spd         null        spd                 0.0     0     0
    hdobbufr       spd         null        spd                 0.0     0     0
    prepbufr       dw          null        dw                  0.0     0     0
+   aeolusbufr     dw          null        dw                  0.0     0     0
    radarbufr      rw          null        rw                  0.0     0     0
    nsstbufr       sst         nsst        sst                 0.0     0     0
    gpsrobufr      gps_bnd     null        gps                 0.0     0     0
