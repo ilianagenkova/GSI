@@ -296,7 +296,7 @@ write(6,*)'READ_LIDAR:  cdata_all read in SETUPDW successfully'
   ihgt=5       ! index of obs vertical coordinate in data array(height-m)
   ielva=6      ! index of elevation angle(radians)
   iazm=7       ! index of azimuth angle(radians) in data array
-  inls=8       ! index of number of laser shots
+  inls=8       ! now this is qc_flag, qc_flag=0 obs passed ECMWF QC #index of number of laser shots
   incls=9      ! index of number of cloud laser shots
   iatd=10      ! index of atmospheric depth     
   ilob=11      ! index of lidar observation

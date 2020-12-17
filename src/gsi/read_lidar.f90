@@ -325,7 +325,7 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
         nodata=min(nodata+1,maxobs)
         ndata=min(ndata+1,maxobs)
         usage = zero
-        if(icuse(ikx) < 0)usage=100._r_kind
+        if(icuse(ikx) < 0)usage=100._r_kind            ! monitor but do not use
         if(ncnumgrp(ikx) > 0 )then                     ! cross validation on
            if(mod(ndata,ncnumgrp(ikx))== ncgroup(ikx)-1)usage=ncmiter(ikx)
         end if
@@ -669,8 +669,9 @@ subroutine read_lidar(nread,ndata,nodata,infile,obstype,lunout,twind,sis,nobs)
 !                usage == 100: don't use - off in convinfo
 !                usage == 101: don't use - invalid in bufr
      usage = zero
-     if(icuse(ikx) < 0)usage=100._r_kind
-     if(aeolusd(3) > 0)usage=101._r_kind
+     if(icuse(ikx) < 0)usage=100._r_kind ! monitor, do not use
+     if(aeolusd(3) > 0)usage=101._r_kind ! if INVALID, do not use at all
+     if(qc_flag .ne. 0)usage=100._r_kind ! failed ECMQF QC => monitor only
 !ILIANA - make sure that the code just above is in sync with my QC
 
 
